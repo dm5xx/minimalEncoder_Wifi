@@ -23,15 +23,21 @@ int8_t requestValues() {
   static int8_t matrix[] = {0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0};
 
   next <<= 2;
-  if (digitalRead(PIN_DATA)) next |= 0x02;
-  if (digitalRead(PIN_CLOCK)) next |= 0x01;
+  
+  if(digitalRead(PIN_DATA)) 
+    next |= 0x02;
+  if(digitalRead(PIN_CLOCK)) 
+    next |= 0x01;
+  
   next &= 0x0f;
 
-   if  (matrix[next] ) {
+   if(matrix[next]) {
       persist <<= 4;
       persist |= next;
-      if ((persist&0xff)==0x2b) return -1;
-      if ((persist&0xff)==0x17) return 1;
+      if((persist&0xff)==0x2b) 
+        return -1;
+      if((persist&0xff)==0x17) 
+        return 1;
    }
    return 0;
 }
