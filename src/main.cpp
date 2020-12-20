@@ -5,6 +5,8 @@
 
 using namespace websockets2_generic;
 
+//#define LDEBUG
+
 #define PIN_CLOCK D1
 #define PIN_DATA D2
 #define PIN_BUTTON D3 // interrupt 0
@@ -23,6 +25,8 @@ static uint16_t persist=0;
 String device = "D0";
 String mode = "C";
 String profile = "0";
+
+int8_t BankNr = -1;
 
 int8_t requestValues() {
   static int8_t matrix[] = {0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0};
@@ -44,7 +48,6 @@ int8_t requestValues() {
         return 1;
    }
    return 0;
-
 }
 
 void myShiftOut(uint number)
@@ -65,19 +68,27 @@ void onEventsCallback(WebsocketsEvent event, String data)
 {
   if (event == WebsocketsEvent::ConnectionOpened) 
   {
-    Serial.println("Connnection Opened");
+#ifdef LDEBUG
+    Serial.println(F("Connnection Opened"));
+#endif
   } 
   else if (event == WebsocketsEvent::ConnectionClosed) 
   {
-    Serial.println("Connnection Closed");
+#ifdef LDEBUG
+    Serial.println(F("Connnection Closed"));
+#endif
   } 
   else if (event == WebsocketsEvent::GotPing) 
   {
-    Serial.println("Got a Ping!");
+#ifdef LDEBUG
+    Serial.println(F("Got a Ping!"));
+#endif
   } 
   else if (event == WebsocketsEvent::GotPong) 
   {
-    Serial.println("Got a Pong!");
+#ifdef LDEBUG
+    Serial.println(F("Got a Pong!"));
+#endif
   }
 }
 
@@ -85,8 +96,10 @@ void onEventsCallback(WebsocketsEvent event, String data)
 // void ICACHE_RAM_ATTR Encode() { // ICACHE... must be placed befor every interrupt function in esp8266!
 
 void setup() {
+#ifdef LDEBUG
   Serial.begin(9600);
-  Serial.println("Basic Encoder Test:");
+  Serial.println(F("Basic Encoder Test:"));
+#endif
  //  pinMode(D3, INPUT_PULLUP);
  //  attachInterrupt(D3, handleKey, RISING);
 
@@ -99,9 +112,10 @@ void setup() {
   pinMode(clockPin, OUTPUT);
   pinMode(dataPin, OUTPUT);
 
-
+#ifdef LDEBUG
   Serial.println("\nStarting ESP8266-Client on " + String(ARDUINO_BOARD));
-  Serial.println(WEBSOCKETS2_GENERIC_VERSION);
+  Serial.println(F(WEBSOCKETS2_GENERIC_VERSION));
+#endif
   
   // Connect to wifi
   WiFi.begin(ssid, password);
@@ -109,74 +123,87 @@ void setup() {
   // Wait some time to connect to wifi
   for (int i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) 
   {
+#ifdef LDEBUG
     Serial.print(".");
+#endif
     delay(1000);
   }
 
   // Check if connected to wifi
   if (WiFi.status() != WL_CONNECTED) 
   {
-    Serial.println("No Wifi!");
+#ifdef LDEBUG
+    Serial.println(F("No Wifi!"));
+#endif
     return;
   }
 
-  Serial.print("Connected to Wifi, Connecting to WebSockets Server @");
+#ifdef LDEBUG
+  Serial.print(F("Connected to Wifi, Connecting to WebSockets Server @"));
   Serial.println(websockets_server_host);
+#endif
  
    while (!connected)
    {
      delay(1000);
-     Serial.print(".");
-  
-     Serial.println("Trying to connect...");
+#ifdef LDEBUG
+     Serial.print(F("."));  
+     Serial.println(F("Trying to connect..."));
+#endif
      connected = client.connect("192.168.97.213", 2999, "/"+device+"/"+mode+"/"+profile);
    }
 
 
   if (connected) 
   {
-    Serial.println("Connected!");
-
-    String WS_msg = String("Hello to Server from ") + BOARD_NAME;
+#ifdef LDEBUG
+    Serial.println(F("Connected!"));
     client.send("Ping");
+#endif
   } 
   else 
   {
-    Serial.println("Not Connected!");
+#ifdef LDEBUG
+    Serial.println(F("Not Connected!"));
+#endif
   }
 
-
-  Serial.println("");
-  Serial.println("WiFi connected");  
-  Serial.println("IP address: ");
+#ifdef LDEBUG
+  Serial.println(F("WiFi connected"));  
+  Serial.println(F("IP address: "));
   Serial.println(WiFi.localIP());
+#endif
 
   // run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) 
   {
     static DynamicJsonDocument doc(200);
-
-    Serial.print("Got Message: ");
-    Serial.println(message.data());
-
     String msg = message.data();    
     DeserializationError error = deserializeJson(doc,  msg);
 
     if (error) {
+#ifdef LDEBUG
         Serial.print(F("deserializeJson() failed: "));
         Serial.println(error.f_str());
+#endif
         return;
     }
 
-    auto number=doc["B4"].as<uint>();
-    
-    Serial.print("Value: ");
-    Serial.println(number);
-    myShiftOut(number);
+    String bn = "B";
+    bn.concat(BankNr);
+        
+    if(doc.containsKey("Bank"))
+        BankNr = doc["Bank"].as<int>();
+    else if(doc.containsKey(bn))
+    {
+        auto number=doc[bn].as<uint>();
+        myShiftOut(number);
+    }
   });
 
   // run callback when events are occuring
   client.onEvent(onEventsCallback);
+  client.send("GetConfig");
 }
 
 
@@ -204,11 +231,14 @@ void loop() {
         while (!connected)
         {
             delay(5000);
-            Serial.print(".");
-        
-            Serial.println("Trying to reconnect!!");
+#ifdef LDEBUG
+            Serial.print(F("."));        
+            Serial.println(F("Trying to reconnect!!"));
+#endif
             connected = client.connect("192.168.97.213", 2999, "/"+device+"/"+mode+"/"+profile);
         }
-        Serial.println("RECONNECTED!!");
+#ifdef LDEBUG
+        Serial.println(F("RECONNECTED!!"));
+#endif
     }
 }
