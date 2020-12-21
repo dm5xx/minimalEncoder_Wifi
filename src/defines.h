@@ -42,14 +42,4 @@
 // Debug Level from 0 to 4
 #define _WEBSOCKETS_LOGLEVEL_     3
 
-const char* ssid = "mmmedia"; //Enter SSID
-const char* password = "tp4004mmatrixx6"; //Enter Password
-
-const char* websockets_server_host = "192.168.97.213"; //Enter server address
-//const char* websockets_server_host = "serverip_or_name"; //Enter server address
-
-#define WEBSOCKETS_PORT     2999
-
-const uint16_t websockets_server_port = WEBSOCKETS_PORT; // Enter server port
-
 #endif      //defines_h

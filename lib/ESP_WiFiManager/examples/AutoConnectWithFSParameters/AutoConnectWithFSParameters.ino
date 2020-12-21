@@ -1,38 +1,127 @@
+/****************************************************************************************************************************
+  AutoConnectWithFSParameters.ino
+  For ESP8266 / ESP32 boards
+  
+  ESP_WiFiManager is a library for the ESP8266/ESP32 platform (https://github.com/esp8266/Arduino) to enable easy
+  configuration and reconfiguration of WiFi credentials using a Captive Portal.
+  
+  Modified from Tzapu https://github.com/tzapu/WiFiManager
+  and from Ken Taylor https://github.com/kentaylor
+  
+  Built by Khoi Hoang https://github.com/khoih-prog/ESP_WiFiManager
+  Licensed under MIT license
+  Version: 1.3.0
+
+  Version Modified By   Date      Comments
+  ------- -----------  ---------- -----------
+  1.0.0   K Hoang      07/10/2019 Initial coding
+  1.0.1   K Hoang      13/12/2019 Fix bug. Add features. Add support for ESP32
+  1.0.2   K Hoang      19/12/2019 Fix bug thatkeeps ConfigPortal in endless loop if Portal/Router SSID or Password is NULL.
+  1.0.3   K Hoang      05/01/2020 Option not displaying AvailablePages in Info page. Enhance README.md. Modify examples
+  1.0.4   K Hoang      07/01/2020 Add RFC952 setHostname feature.
+  1.0.5   K Hoang      15/01/2020 Add configurable DNS feature. Thanks to @Amorphous of https://community.blynk.cc
+  1.0.6   K Hoang      03/02/2020 Add support for ArduinoJson version 6.0.0+ ( tested with v6.14.1 )
+  1.0.7   K Hoang      13/04/2020 Reduce start time, fix SPIFFS bug in examples, update README.md
+  1.0.8   K Hoang      10/06/2020 Fix STAstaticIP issue. Restructure code. Add LittleFS support for ESP8266 core 2.7.1+
+  1.0.9   K Hoang      29/07/2020 Fix ESP32 STAstaticIP bug. Permit changing from DHCP <-> static IP using Config Portal.
+                                  Add, enhance examples (fix MDNS for ESP32)
+  1.0.10  K Hoang      08/08/2020 Add more features to Config Portal. Use random WiFi AP channel to avoid conflict.
+  1.0.11  K Hoang      17/08/2020 Add CORS feature. Fix bug in softAP, autoConnect, resetSettings.
+  1.1.0   K Hoang      28/08/2020 Add MultiWiFi feature to autoconnect to best WiFi at runtime
+  1.1.1   K Hoang      30/08/2020 Add setCORSHeader function to allow flexible CORS. Fix typo and minor improvement.
+  1.1.2   K Hoang      17/08/2020 Fix bug. Add example.
+  1.2.0   K Hoang      09/10/2020 Restore cpp code besides Impl.h code to use if linker error. Fix bug.
+  1.3.0   K Hoang      04/12/2020 Add LittleFS support to ESP32 using LITTLEFS Library
+ *****************************************************************************************************************************/
+#if !( defined(ESP8266) ||  defined(ESP32) )
+  #error This code is intended to run on the ESP8266 or ESP32 platform! Please check your Tools->Board setting.
+#endif
+
 // Use from 0 to 4. Higher number, more debugging messages and memory usage.
 #define _WIFIMGR_LOGLEVEL_    3
-//#define LDEBUG
 
 #include <FS.h>
-
+  
 //Ported to ESP32
+#ifdef ESP32
+  #include <esp_wifi.h>
+  #include <WiFi.h>
+  #include <WiFiClient.h>
+
+  // From v1.1.0
+  #include <WiFiMulti.h>
+  WiFiMulti wifiMulti;
+
+  // LittleFS has higher priority than SPIFFS
+  #define USE_LITTLEFS    true
+  #define USE_SPIFFS      false
+
+  #if USE_LITTLEFS
+    // Use LittleFS
+    #include "FS.h"
+
+    // The library will be depreciated after being merged to future major Arduino esp32 core release 2.x
+    // At that time, just remove this library inclusion
+    #include <LITTLEFS.h>             // https://github.com/lorol/LITTLEFS
+    
+    FS* filesystem =      &LITTLEFS;
+    #define FileFS        LITTLEFS
+    #define FS_Name       "LittleFS"
+  #elif USE_SPIFFS
+    #include <SPIFFS.h>
+    FS* filesystem =      &SPIFFS;
+    #define FileFS        SPIFFS
+    #define FS_Name       "SPIFFS"
+  #else
+    // Use FFat
+    #include <FFat.h>
+    FS* filesystem =      &FFat;
+    #define FileFS        FFat
+    #define FS_Name       "FFat"
+  #endif
+  //////
+
+  #define ESP_getChipId()   ((uint32_t)ESP.getEfuseMac())
+
+  #define LED_BUILTIN       2
+  #define LED_ON            HIGH
+  #define LED_OFF           LOW
+
+#else
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
-
   //needed for library
-#include <DNSServer.h>
-#include <ESP8266WebServer.h>
+  #include <DNSServer.h>
+  #include <ESP8266WebServer.h>
 
-// From v1.1.0
-#include <ESP8266WiFiMulti.h>
-ESP8266WiFiMulti wifiMulti;
+  // From v1.1.0
+  #include <ESP8266WiFiMulti.h>
+  ESP8266WiFiMulti wifiMulti;
 
-#include <LittleFS.h>
-FS* filesystem = &LittleFS;
-#define FileFS    LittleFS
-#define FS_Name       "LittleFS"
-
-#define ESP_getChipId()   (ESP.getChipId())
-
-#define LED_ON      LOW
-#define LED_OFF     HIGH
+  #define USE_LITTLEFS      true
+  
+  #if USE_LITTLEFS
+    #include <LittleFS.h>
+    FS* filesystem = &LittleFS;
+    #define FileFS    LittleFS
+    #define FS_Name       "LittleFS"
+  #else
+    FS* filesystem = &SPIFFS;
+    #define FileFS    SPIFFS
+    #define FS_Name       "SPIFFS"
+  #endif
+  //////
+  
+  #define ESP_getChipId()   (ESP.getChipId())
+  
+  #define LED_ON      LOW
+  #define LED_OFF     HIGH
+#endif
 
 // Pin D2 mapped to pin GPIO2/ADC12 of ESP32, or GPIO2/TXD1 of NodeMCU control on-board LED
-#define PIN_LED       D4
+#define PIN_LED       LED_BUILTIN
 
 // Now support ArduinoJson 6.0.0+ ( tested with v6.14.1 )
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
-//#include <Arduino.h>
-#include "defines.h"
-#include <WebSockets2_Generic.h>
 
 char configFileName[] = "/config.json";
 
@@ -74,8 +163,11 @@ WM_Config         WM_config;
 
 #define  CONFIG_FILENAME              F("/wifi_cred.dat")
 
+// Indicates whether ESP has WiFi credentials saved from previous session, or double reset detected
 bool initialConfig = false;
+//////
 
+// SSID and PW for Config Portal
 String AP_SSID;
 String AP_PASS;
 
@@ -110,8 +202,8 @@ String AP_PASS;
   #define USE_DHCP_IP     true
 #else
   // You can select DHCP or Static IP here
-  #define USE_DHCP_IP     true
-  //#define USE_DHCP_IP     false
+  //#define USE_DHCP_IP     true
+  #define USE_DHCP_IP     false
 #endif
 
 #if ( USE_DHCP_IP || ( defined(USE_STATIC_IP_CONFIG_IN_CP) && !USE_STATIC_IP_CONFIG_IN_CP ) )
@@ -142,19 +234,19 @@ IPAddress dns2IP      = IPAddress(8, 8, 8, 8);
 #include <ESP_WiFiManager.h>              //https://github.com/khoih-prog/ESP_WiFiManager
 
 //define your default values here, if there are different values in configFileName (config.json), they are overwritten.
-#define WEBSOCKET_SERVER_LEN                64
-#define WEBSOCKET_DEVICE_LEN                 3
-#define WEBSOCKET_SERVER_PORT_LEN           6
-#define WEBSOCKET_MODE_LEN             3
-#define WEBSOCKET_ID_LEN            3
+#define BLYNK_SERVER_LEN                64
+#define BLYNK_TOKEN_LEN                 32
+#define BLYNK_SERVER_PORT_LEN           6
 
-char websocket_server [WEBSOCKET_SERVER_LEN]        = "ultra";
-char websocket_port   [WEBSOCKET_SERVER_PORT_LEN]   = "2999";
-char websocket_device  [WEBSOCKET_DEVICE_LEN]         = "D1";
-char websocket_mode  [WEBSOCKET_MODE_LEN] = "C";
-char websocket_id    [WEBSOCKET_ID_LEN]    = "0";
+#define MQTT_SERVER_MAX_LEN             40
+#define MQTT_SERVER_PORT_LEN            6
 
-char dest[12] = "\0";
+char blynk_server [BLYNK_SERVER_LEN]        = "account.duckdns.org";
+char blynk_port   [BLYNK_SERVER_PORT_LEN]   = "8080";
+char blynk_token  [BLYNK_TOKEN_LEN]         = "YOUR_BLYNK_TOKEN";
+
+char mqtt_server  [MQTT_SERVER_MAX_LEN];
+char mqtt_port    [MQTT_SERVER_PORT_LEN]    = "8080";
 
 // Function Prototypes
 uint8_t connectMultiWiFi(void);
@@ -165,9 +257,7 @@ bool shouldSaveConfig = false;
 //callback notifying us of the need to save config
 void saveConfigCallback(void)
 {
-#ifdef LDEBUG
   Serial.println("Should save config");
-#endif
   shouldSaveConfig = true;
 }
 
@@ -177,77 +267,95 @@ bool loadFileFSConfigFile(void)
   //FileFS.format();
 
   //read configuration from FS json
-#ifdef LDEBUG
   Serial.println("Mounting FS...");
-#endif
 
   if (FileFS.begin())
   {
-#ifdef LDEBUG
     Serial.println("Mounted file system");
-#endif
 
     if (FileFS.exists(configFileName))
     {
       //file exists, reading and loading
-#ifdef LDEBUG
       Serial.println("Reading config file");
-#endif
       File configFile = FileFS.open(configFileName, "r");
 
       if (configFile)
       {
-#ifdef LDEBUG
         Serial.print("Opened config file, size = ");
-#endif
         size_t configFileSize = configFile.size();
-#ifdef LDEBUG
         Serial.println(configFileSize);
-#endif
 
         // Allocate a buffer to store contents of the file.
         std::unique_ptr<char[]> buf(new char[configFileSize + 1]);
 
         configFile.readBytes(buf.get(), configFileSize);
 
-#ifdef LDEBUG
         Serial.print("\nJSON parseObject() result : ");
-#endif
 
+#if (ARDUINOJSON_VERSION_MAJOR >= 6)
         DynamicJsonDocument json(1024);
         auto deserializeError = deserializeJson(json, buf.get(), configFileSize);
 
         if ( deserializeError )
         {
-#ifdef LDEBUG
           Serial.println("failed");
-#endif
           return false;
         }
         else
         {
-#ifdef LDEBUG
           Serial.println("OK");
-#endif
 
-          if (json["websocket_server"])
-            strncpy(websocket_server, json["websocket_server"], sizeof(websocket_server));
+          if (json["blynk_server"])
+            strncpy(blynk_server, json["blynk_server"], sizeof(blynk_server));
          
-          if (json["websocket_port"])
-            strncpy(websocket_port, json["websocket_port"], sizeof(websocket_port));
+          if (json["blynk_port"])
+            strncpy(blynk_port, json["blynk_port"], sizeof(blynk_port));
  
-          if (json["websocket_device"])
-            strncpy(websocket_device,  json["websocket_device"], sizeof(websocket_device));
+          if (json["blynk_token"])
+            strncpy(blynk_token,  json["blynk_token"], sizeof(blynk_token));
 
-          if (json["websocket_mode"])
-            strncpy(websocket_mode, json["websocket_mode"], sizeof(websocket_mode));
+          if (json["mqtt_server"])
+            strncpy(mqtt_server, json["mqtt_server"], sizeof(mqtt_server));
 
-          if (json["websocket_id"])  
-            strncpy(websocket_id,   json["websocket_id"], sizeof(websocket_id));
+          if (json["mqtt_port"])  
+            strncpy(mqtt_port,   json["mqtt_port"], sizeof(mqtt_port));
         }
 
         //serializeJson(json, Serial);
         serializeJsonPretty(json, Serial);
+#else
+        DynamicJsonBuffer jsonBuffer;
+        // Parse JSON string
+        JsonObject& json = jsonBuffer.parseObject(buf.get());
+        // Test if parsing succeeds.
+
+        if (json.success())
+        {
+          Serial.println("OK");
+
+          if (json["blynk_server"])
+            strncpy(blynk_server, json["blynk_server"], sizeof(blynk_server));
+         
+          if (json["blynk_port"])
+            strncpy(blynk_port, json["blynk_port"], sizeof(blynk_port));
+ 
+          if (json["blynk_token"])
+            strncpy(blynk_token,  json["blynk_token"], sizeof(blynk_token));
+
+          if (json["mqtt_server"])
+            strncpy(mqtt_server, json["mqtt_server"], sizeof(mqtt_server));
+
+          if (json["mqtt_port"])  
+            strncpy(mqtt_port,   json["mqtt_port"], sizeof(mqtt_port));
+        }
+        else
+        {
+          Serial.println("failed");
+          return false;
+        }
+        //json.printTo(Serial);
+        json.prettyPrintTo(Serial);
+#endif
 
         configFile.close();
       }
@@ -255,9 +363,7 @@ bool loadFileFSConfigFile(void)
   }
   else
   {
-#ifdef LDEBUG
     Serial.println("failed to mount FS");
-#endif
     return false;
   }
   return true;
@@ -265,33 +371,41 @@ bool loadFileFSConfigFile(void)
 
 bool saveFileFSConfigFile(void)
 {
-#ifdef LDEBUG
   Serial.println("Saving config");
-#endif
+
+#if (ARDUINOJSON_VERSION_MAJOR >= 6)
   DynamicJsonDocument json(1024);
+#else
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject& json = jsonBuffer.createObject();
+#endif
 
-  json["websocket_server"] = websocket_server;
-  json["websocket_port"]   = websocket_port;
-  json["websocket_device"]  = websocket_device;
+  json["blynk_server"] = blynk_server;
+  json["blynk_port"]   = blynk_port;
+  json["blynk_token"]  = blynk_token;
 
-  json["websocket_mode"] = websocket_mode;
-  json["websocket_id"]   = websocket_id;
+  json["mqtt_server"] = mqtt_server;
+  json["mqtt_port"]   = mqtt_port;
 
   File configFile = FileFS.open(configFileName, "w");
 
-#ifdef LDEBUG
   if (!configFile)
   {
-   Serial.println("Failed to open config file for writing");
+    Serial.println("Failed to open config file for writing");
   }
-#endif
 
+#if (ARDUINOJSON_VERSION_MAJOR >= 6)
   //serializeJson(json, Serial);
-#ifdef LDEBUG
   serializeJsonPretty(json, Serial);
-#endif
   // Write data to file and close it
   serializeJson(json, configFile);
+#else
+  //json.printTo(Serial);
+  json.prettyPrintTo(Serial);
+  // Write data to file and close it
+  json.printTo(configFile);
+#endif
+
   configFile.close();
   //end save
 }
@@ -300,35 +414,25 @@ void heartBeatPrint(void)
 {
   static int num = 1;
 
-
-#ifdef LDEBUG
   if (WiFi.status() == WL_CONNECTED)
     Serial.print("H");        // H means connected to WiFi
   else
     Serial.print("F");        // F means not connected to WiFi
-#endif
 
   if (num == 80)
   {
-#ifdef LDEBUG
     Serial.println();
-#endif
     num = 1;
   }
   else if (num++ % 10 == 0)
   {
-#ifdef LDEBUG
     Serial.print(" ");
-#endif
   }
 }
 
 void toggleLED()
 {
   //toggle state
-#ifdef LDEBUG
-  Serial.print("Toggle");        // H means connected to WiFi
-#endif
   digitalWrite(PIN_LED, !digitalRead(PIN_LED));
 }
 
@@ -336,9 +440,7 @@ void check_WiFi(void)
 {
   if ( (WiFi.status() != WL_CONNECTED) )
   {
-#ifdef LDEBUG
     Serial.println("\nWiFi lost. Call connectMultiWiFi in loop");
-#endif
     connectMultiWiFi();
   }
 }  
@@ -415,7 +517,13 @@ void saveConfigData(void)
 
 uint8_t connectMultiWiFi(void)
 {
+#if ESP32
+  // For ESP32, this better be 0 to shorten the connect time
+  #define WIFI_MULTI_1ST_CONNECT_WAITING_MS       0
+#else
+  // For ESP8266, this better be 2200 to enable connect the 1st time
   #define WIFI_MULTI_1ST_CONNECT_WAITING_MS       2200L
+#endif
 
 #define WIFI_MULTI_CONNECT_WAITING_MS           100L
   
@@ -477,136 +585,15 @@ uint8_t connectMultiWiFi(void)
   return status;
 }
 
-using namespace websockets2_generic;
-
-#define PIN_CLOCK D1
-#define PIN_DATA D2
-#define PIN_BUTTON D3 // interrupt 0
-
-
-#define latchPin D8 
-#define clockPin D5 
-#define dataPin D7
- 
-WebsocketsClient client;
-bool connected = false;
-
-static uint8_t next = 0;
-static uint16_t persist=0;
-
-String device = "D0";
-String mode = "C";
-String profile = "0";
-
-int8_t BankNr = -1;
-
-int8_t requestValues() {
-  static int8_t matrix[] = {0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0};
-  next <<= 2;
+void setup()
+{
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+  while (!Serial);
   
-  if(digitalRead(PIN_DATA)) 
-    next |= 0x02;
-  if(digitalRead(PIN_CLOCK)) 
-    next |= 0x01;
-  
-  next &= 0x0f;
-
-   if(matrix[next]) {
-      persist <<= 4;
-      persist |= next;
-      if((persist&0xff)==0x2b) 
-        return -1;
-      if((persist&0xff)==0x17) 
-        return 1;
-   }
-   return 0;
-}
-
-void myShiftOut(uint number)
-{
-    digitalWrite(latchPin, LOW);
-
-    for(int x = 0; x < 16; x++)
-    {
-        digitalWrite(dataPin, (number >> x) & 1);
-        digitalWrite(clockPin, 1);
-        digitalWrite(clockPin, 0);
-    }
-
-    digitalWrite(latchPin, HIGH);        
-}
-
-void onEventsCallback(WebsocketsEvent event, String data) 
-{
-  if (event == WebsocketsEvent::ConnectionOpened) 
-  {
-#ifdef LDEBUG
-    Serial.println(F("Connnection Opened"));
-#endif
-  } 
-  else if (event == WebsocketsEvent::ConnectionClosed) 
-  {
-#ifdef LDEBUG
-    Serial.println(F("Connnection Closed"));
-#endif
-  } 
-  else if (event == WebsocketsEvent::GotPing) 
-  {
-#ifdef LDEBUG
-    Serial.println(F("Got a Ping!"));
-#endif
-  } 
-  else if (event == WebsocketsEvent::GotPong) 
-  {
-#ifdef LDEBUG
-    Serial.println(F("Got a Pong!"));
-#endif
-  }
-}
-
-void warningLed()
-{
-    for(byte a = 0; a < 10; a++)
-    {
-        digitalWrite(PIN_LED, HIGH);
-        delay(150);
-        digitalWrite(PIN_LED, LOW);
-        delay(150);
-    }
-}
-
-// void ICACHE_RAM_ATTR Encode() { // ICACHE... must be placed befor every interrupt function in esp8266!
-
-void setup() {
-#ifdef LDEBUG
-  delay(5000);
-  Serial.begin(9600);
-  Serial.println(F("Basic Encoder Test:"));
-#endif
- //  pinMode(D3, INPUT_PULLUP);
- //  attachInterrupt(D3, handleKey, RISING);
-
-  pinMode(PIN_CLOCK, INPUT);
-  pinMode(PIN_CLOCK, INPUT_PULLUP);
-  pinMode(PIN_DATA, INPUT);
-  pinMode(PIN_DATA, INPUT_PULLUP);
-
-  pinMode(latchPin, OUTPUT);
-  pinMode(clockPin, OUTPUT);
-  pinMode(dataPin, OUTPUT);
-
-  pinMode(D0, INPUT_PULLUP);
-  pinMode(D4, OUTPUT);
-
-#ifdef LDEBUG
-  Serial.println("\nStarting ESP8266-Client on " + String(ARDUINO_BOARD));
-  Serial.println(F(WEBSOCKETS2_GENERIC_VERSION));
-
-
   Serial.print("\nStarting AutoConnectWithFSParams using " + String(FS_Name));
   Serial.println(" on " + String(ARDUINO_BOARD));
   Serial.println("ESP_WiFiManager Version " + String(ESP_WIFIMANAGER_VERSION));
-#endif
 
   if (FORMAT_FILESYSTEM) 
     FileFS.format();
@@ -618,10 +605,8 @@ void setup() {
   if (!FileFS.begin())
 #endif  
   {
-#ifdef LDEBUG
-   Serial.print(FS_Name);
-   Serial.println(F(" failed! AutoFormatting."));
-#endif
+    Serial.print(FS_Name);
+    Serial.println(F(" failed! AutoFormatting."));
     
 #ifdef ESP8266
     FileFS.format();
@@ -633,12 +618,12 @@ void setup() {
   // The extra parameters to be configured (can be either global or just in the setup)
   // After connecting, parameter.getValue() will get you the configured value
   // id/name placeholder/prompt default length
-  ESP_WMParameter custom_websocket_server("websocket_server", "websocket_server", websocket_server, WEBSOCKET_SERVER_LEN + 1);
-  ESP_WMParameter custom_websocket_port  ("websocket_port",   "websocket_port",   websocket_port,   WEBSOCKET_SERVER_PORT_LEN + 1);
-  ESP_WMParameter custom_websocket_device ("websocket_device",  "websocket_device",  websocket_device,  WEBSOCKET_DEVICE_LEN + 1 );
+  ESP_WMParameter custom_blynk_server("blynk_server", "blynk_server", blynk_server, BLYNK_SERVER_LEN + 1);
+  ESP_WMParameter custom_blynk_port  ("blynk_port",   "blynk_port",   blynk_port,   BLYNK_SERVER_PORT_LEN + 1);
+  ESP_WMParameter custom_blynk_token ("blynk_token",  "blynk_token",  blynk_token,  BLYNK_TOKEN_LEN + 1 );
 
-  ESP_WMParameter custom_websocket_mode("websocket_mode", "websocket_mode", websocket_mode, WEBSOCKET_MODE_LEN + 1);
-  ESP_WMParameter custom_websocket_id  ("websocket_id",   "websocket_id",   websocket_id,   WEBSOCKET_ID_LEN + 1);
+  ESP_WMParameter custom_mqtt_server("mqtt_server", "mqtt_server", mqtt_server, MQTT_SERVER_MAX_LEN + 1);
+  ESP_WMParameter custom_mqtt_port  ("mqtt_port",   "mqtt_port",   mqtt_port,   MQTT_SERVER_PORT_LEN + 1);
 
   unsigned long startedAt = millis();
   
@@ -651,12 +636,12 @@ void setup() {
   ESP_wifiManager.setSaveConfigCallback(saveConfigCallback);
 
   //add all your parameters here
-  ESP_wifiManager.addParameter(&custom_websocket_server);
-  ESP_wifiManager.addParameter(&custom_websocket_port);
-  ESP_wifiManager.addParameter(&custom_websocket_device);
+  ESP_wifiManager.addParameter(&custom_blynk_server);
+  ESP_wifiManager.addParameter(&custom_blynk_port);
+  ESP_wifiManager.addParameter(&custom_blynk_token);
 
-  ESP_wifiManager.addParameter(&custom_websocket_mode);
-  ESP_wifiManager.addParameter(&custom_websocket_id);
+  ESP_wifiManager.addParameter(&custom_mqtt_server);
+  ESP_wifiManager.addParameter(&custom_mqtt_port);
 
   //reset settings - for testing
   //ESP_wifiManager.resetSettings();
@@ -698,22 +683,16 @@ void setup() {
   Router_Pass = ESP_wifiManager.WiFi_Pass();
 
   //Remove this line if you do not want to see WiFi password printed
-#ifdef LDEBUG
   Serial.println("\nStored: SSID = " + Router_SSID + ", Pass = " + Router_Pass);
-#endif
 
   if (Router_SSID != "")
   {
     ESP_wifiManager.setConfigPortalTimeout(120); //If no access point name has been previously entered disable timeout.
-#ifdef LDEBUG
     Serial.println("Got stored Credentials. Timeout 120s");
-#endif
   }
   else
   {
-#ifdef LDEBUG
     Serial.println("No stored Credentials. No timeout");
-#endif
   }
 
   String chipID = String(ESP_getChipId(), HEX);
@@ -726,26 +705,17 @@ void setup() {
   // From v1.1.0, Don't permit NULL password
   if ( (Router_SSID == "") || (Router_Pass == "") )
   {
-#ifdef LDEBUG
     Serial.println("We haven't got any access point credentials, so get them now");
-#endif
 
     initialConfig = true;
 
     // Starts an access point
     //if (!ESP_wifiManager.startConfigPortal((const char *) ssid.c_str(), password))
     if ( !ESP_wifiManager.startConfigPortal(AP_SSID.c_str(), AP_PASS.c_str()) )
-    {
-#ifdef LDEBUG
       Serial.println("Not connected to WiFi but continuing anyway.");
-#endif
-    } 
-    else 
-    {
-#ifdef LDEBUG
+    else
       Serial.println("WiFi connected...yeey :)");
-#endif
-    }
+
     // Stored  for later usage, from v1.1.0, but clear first
     memset(&WM_config, 0, sizeof(WM_config));
     
@@ -798,22 +768,16 @@ void setup() {
 
     if ( WiFi.status() != WL_CONNECTED ) 
     {
-#ifdef LDEBUG
       Serial.println("ConnectMultiWiFi in setup");
-#endif
      
       connectMultiWiFi();
     }
   }
 
-#ifdef LDEBUG
   Serial.print("After waiting ");
   Serial.print((float) (millis() - startedAt) / 1000L);
   Serial.print(" secs more in setup(), connection result is ");
-#endif
 
-
-#ifdef LDEBUG
   if (WiFi.status() == WL_CONNECTED)
   {
     Serial.print("connected. Local IP: ");
@@ -821,15 +785,14 @@ void setup() {
   }
   else
     Serial.println(ESP_wifiManager.getStatus(WiFi.status()));
-#endif
 
   //read updated parameters
-  strncpy(websocket_server, custom_websocket_server.getValue(), sizeof(websocket_server));
-  strncpy(websocket_port,   custom_websocket_port.getValue(),   sizeof(websocket_port));
-  strncpy(websocket_device,  custom_websocket_device.getValue(),  sizeof(websocket_device));
+  strncpy(blynk_server, custom_blynk_server.getValue(), sizeof(blynk_server));
+  strncpy(blynk_port,   custom_blynk_port.getValue(),   sizeof(blynk_port));
+  strncpy(blynk_token,  custom_blynk_token.getValue(),  sizeof(blynk_token));
 
-  strncpy(websocket_mode, custom_websocket_mode.getValue(), sizeof(websocket_mode));
-  strncpy(websocket_id, custom_websocket_id.getValue(),     sizeof(websocket_id));
+  strncpy(mqtt_server, custom_mqtt_server.getValue(), sizeof(mqtt_server));
+  strncpy(mqtt_port, custom_mqtt_port.getValue(),     sizeof(mqtt_port));
 
   //save the custom parameters to FS
   if (shouldSaveConfig)
@@ -837,154 +800,11 @@ void setup() {
     saveFileFSConfigFile();
   }
 
-  // Check if connected to wifi
-  if (WiFi.status() != WL_CONNECTED) 
-  {
-#ifdef LDEBUG
-    Serial.println(F("No Wifi!"));
-#endif
-    return;
-  }
-
-#ifdef LDEBUG
-  Serial.print(F("Connected to Wifi, Connecting to WebSockets Server @"));
-  Serial.println(websockets_server_host);
-#endif
- 
-    strcat(dest, "/");
-    strcat(dest, websocket_device);
-    strcat(dest, "/");
-    strcat(dest, websocket_mode);
-    strcat(dest, "/");
-    strcat(dest, websocket_id);
-
-   while (!connected)
-   {
-#ifdef LDEBUG
-     Serial.print(F("."));  
-     Serial.println(F("Trying to connect..."));
-#endif
-     connected = client.connect(websocket_server, atoi(websocket_port), dest);
-
-     if(!connected)
-         warningLed();
-   }
-
-
-  if (connected) 
-  {
-#ifdef LDEBUG
-    Serial.println(F("Connected!"));
-    client.send("Ping");
-#endif
-  } 
-  else 
-  {
-#ifdef LDEBUG
-    Serial.println(F("Not Connected!"));
-#endif
-  }
-
-#ifdef LDEBUG
-  Serial.println(F("WiFi connected"));  
-  Serial.println(F("IP address: "));
+  Serial.print("Local IP = ");
   Serial.println(WiFi.localIP());
-#endif
-
-byte counter = 0;
-
-while(counter < 5)
-{
-    int sensorVal = digitalRead(D0);
-    
-    if (sensorVal == LOW) {
-          
-          Serial.println(F("ESR rest!"));
-          ESP_wifiManager.resetSettings();
-          WiFi.disconnect();
-          delay(1000);
-          Serial.println(F("ESP restarting..."));
-          ESP.restart();
-    }
-    else
-    {
-      Serial.println(F("NotPushed!"));
-    }
-    
-    delay(500);
-    counter++;
 }
 
-
-  // run callback when messages are received
-  client.onMessage([&](WebsocketsMessage message) 
-  {
-    static DynamicJsonDocument doc(200);
-    String msg = message.data();    
-    DeserializationError error = deserializeJson(doc,  msg);
-
-    if (error) {
-#ifdef LDEBUG
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.f_str());
-#endif
-        return;
-    }
-
-    String bn = "B";
-    bn.concat(BankNr);
-        
-    if(doc.containsKey("Bank"))
-        BankNr = doc["Bank"].as<int>();
-    else if(doc.containsKey(bn))
-    {
-        auto number=doc[bn].as<uint>();
-        myShiftOut(number);
-    }
-  });
-
-  // run callback when events are occuring
-  client.onEvent(onEventsCallback);
-  client.send("GetConfig");
-}
-
-
-void loop() {
-    static int8_t value;
-
-    check_status();
-
-    if (client.available()) 
-    {
-        client.poll();
-        value=requestValues();
-
-        if( value!=0 )
-        {
-            if ( next==0x0b) 
-                client.send("0");
-            
-            if ( next==0x07)
-                client.send("1");
-        }
-    }
-    else
-    {
-        connected = false;
-
-        while (!connected)
-        {
-#ifdef LDEBUG
-            Serial.print(F("."));        
-            Serial.println(F("Trying to reconnect!!"));
-#endif
-          connected = client.connect(websocket_server, atoi(websocket_port), dest);
-
-         if(!connected)
-             warningLed();
-       }
-#ifdef LDEBUG
-        Serial.println(F("RECONNECTED!!"));
-#endif
-    }
+void loop()
+{  
+  check_status();
 }
